@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { soundEngine } from '../audio';
-import { OnlineSession, OnlinePlayer } from '../online';
+import { DuelDamageEvent, DuelEndEvent, DuelRequest, DuelState, OnlineSession, OnlinePlayer } from '../online';
 import {
   CLASSES,
   generateWorldEnemies,
@@ -57,6 +57,11 @@ export interface WorldCallbacks {
   onNearFlowerChange: (flower: GoldenFlower | null) => void;
   onNpcClicked: (npc: NpcDef) => void;
   onFloatingText: (item: Omit<FloatingDamage, 'id'>) => void;
+  onDuelRequest: (request: DuelRequest) => void;
+  onDuelState: (state: DuelState | null) => void;
+  onDuelDamage: (event: DuelDamageEvent) => void;
+  onDuelEnd: (event: DuelEndEvent, localWon: boolean) => void;
+  onDuelNotice: (message: string) => void;
   onHudTick: (snapshot: {
     playerX: number;
     playerZ: number;
@@ -91,6 +96,20 @@ export interface WorldCallbacks {
       screenY: number;
       visible: boolean;
     }>;
+    onlinePlayers: Array<{
+      id: string;
+      username: string;
+      level: number;
+      hp: number;
+      maxHp: number;
+      x: number;
+      z: number;
+      distance: number;
+      screenX: number;
+      screenY: number;
+      visible: boolean;
+      duelId?: string | null;
+    }>;
     cooldowns: number[];
     dodgeCooldown: number;
   }) => void;
@@ -112,6 +131,8 @@ export interface WorldController {
   respawnInCity: () => void;
   syncStats: (stats: HeroStats) => void;
   syncSkillLevels: (levels: Record<string, number>) => void;
+  requestDuel: (targetId: string) => void;
+  respondDuel: (requestId: string, accept: boolean) => void;
   getMapDots: () => Array<{ id: string; x: number; z: number; isBoss: boolean }>;
   setPaused: (paused: boolean) => void;
   dispose: () => void;
@@ -292,7 +313,30 @@ export function mountWorldScene(
   const worldGroup = new THREE.Group();
   scene.add(worldGroup);
 
-
+  // === COLOSSEUM DUEL ARENA ===
+  const duelArena = new THREE.Group();
+  const arenaCenter = { x: 0, z: 380, radius: 24 };
+  const arenaFloor = new THREE.Mesh(
+    new THREE.CylinderGeometry(arenaCenter.radius, arenaCenter.radius + 1.5, 0.8, 48),
+    new THREE.MeshStandardMaterial({ color: 0x3b3030, roughness: 0.82, metalness: 0.18 })
+  );
+  arenaFloor.position.set(arenaCenter.x, 0.35, arenaCenter.z);
+  arenaFloor.receiveShadow = true;
+  duelArena.add(arenaFloor);
+  const arenaRing = new THREE.Mesh(
+    new THREE.TorusGeometry(arenaCenter.radius - 1.2, 0.65, 12, 64),
+    new THREE.MeshStandardMaterial({ color: 0xdc2626, emissive: 0x7f1d1d, emissiveIntensity: 1.5, metalness: 0.65, roughness: 0.25 })
+  );
+  arenaRing.rotation.x = Math.PI / 2;
+  arenaRing.position.set(arenaCenter.x, 0.8, arenaCenter.z);
+  duelArena.add(arenaRing);
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.05, 5.5, 10), new THREE.MeshStandardMaterial({ color: 0x4b3a35, roughness: 0.8 }));
+    pillar.position.set(arenaCenter.x + Math.cos(a) * (arenaCenter.radius + 1), 2.75, arenaCenter.z + Math.sin(a) * (arenaCenter.radius + 1));
+    duelArena.add(pillar);
+  }
+  worldGroup.add(duelArena);
 
   // 1. Ocean & Continent
   const ocean = new THREE.Mesh(
@@ -1088,36 +1132,81 @@ export function mountWorldScene(
   // === HERO RIG ===
   const heroRig: HeroRig = createHeroRig(gender, classId);
 
-  // Lightweight realtime multiplayer: remote players are represented by the same hero rig and
-  // receive authoritative position updates from the Render WebSocket service.
-  const remotePlayers = new Map<string, { player: OnlinePlayer; rig: HeroRig }>();
-  const online = new OnlineSession(
-    { id: '', username: identity.username, gender, classId, x: initialSpawn.x, z: initialSpawn.z, level: identity.level },
-    () => {}
+  // Realtime multiplayer + server-authoritative duels.
+  const remotePlayers = new Map<string, { player: OnlinePlayer; rig: HeroRig; aura: THREE.Mesh }>();
+  let activeDuel: DuelState | null = null;
+  const localDuelAura = new THREE.Mesh(
+    new THREE.TorusGeometry(1.35, 0.14, 10, 32),
+    new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.9, depthWrite: false })
   );
+  localDuelAura.rotation.x = Math.PI / 2;
+  localDuelAura.position.y = 0.08;
+  localDuelAura.visible = false;
+  scene.add(localDuelAura);
+
+  const online = new OnlineSession(
+    {
+      id: '', username: identity.username, gender, classId,
+      x: initialSpawn.x, z: initialSpawn.z, level: identity.level,
+      hp: initialStats.hp, maxHp: initialStats.maxHp, mp: initialStats.mp, maxMp: initialStats.maxMp,
+      atk: initialStats.atk, def: initialStats.def, gold: initialStats.gold, duelId: null,
+    },
+    () => {},
+    {
+      onDuelRequest: (request) => callbacks.onDuelRequest(request),
+      onDuelState: (state) => {
+        activeDuel = state;
+        localDuelAura.visible = Boolean(state?.active);
+        if (state?.active) {
+          heroRig.root.position.set(state.spawn.x, 0, state.spawn.z);
+          localDuelAura.position.set(heroRig.root.position.x, 0.08, heroRig.root.position.z);
+          callbacks.onDuelState(state);
+        } else callbacks.onDuelState(null);
+      },
+      onDuelDamage: (event) => {
+        if (event.targetId === online.getLocalId()) {
+          callbacks.onStatsChange((prev) => ({ ...prev, hp: Math.max(0, event.hp) }));
+          const sc = projectToScreen(heroRig.root.position.x, 2.5, heroRig.root.position.z);
+          if (sc.visible) callbacks.onFloatingText({ x: sc.x, y: sc.y, text: `-${event.damage}`, kind: 'enemyHit' });
+          spawnBurst(heroRig.root.position.x, 1.0, heroRig.root.position.z, 0xdc2626, 7);
+        } else if (activeDuel && event.targetId === activeDuel.opponentId) {
+          const remote = remotePlayers.get(event.targetId);
+          if (remote) { remote.player = { ...remote.player, hp: event.hp }; spawnBurst(remote.player.x, 1.0, remote.player.z, 0xf97316, 7); }
+        }
+        callbacks.onDuelDamage(event);
+      },
+      onDuelEnd: (event) => {
+        activeDuel = null; localDuelAura.visible = false; callbacks.onDuelEnd(event, event.winnerId === online.getLocalId());
+      },
+      onDuelNotice: (message) => callbacks.onDuelNotice(message),
+    }
+  );
+
   const syncRemotePlayers = (list: OnlinePlayer[]) => {
     const active = new Set(list.map((p) => p.id));
     for (const [id, remote] of remotePlayers) {
-      if (!active.has(id)) { worldGroup.remove(remote.rig.root); remotePlayers.delete(id); }
+      if (!active.has(id)) { worldGroup.remove(remote.rig.root); worldGroup.remove(remote.aura); remotePlayers.delete(id); }
     }
     for (const p of list) {
-      if (p.id === '') continue;
+      if (!p.id || p.id === online.getLocalId()) continue;
       let remote = remotePlayers.get(p.id);
       if (!remote) {
         const rig = createHeroRig(p.gender, (CLASSES.some((c) => c.id === p.classId) ? p.classId : classId) as ClassId);
         rig.root.scale.setScalar(0.92);
-        worldGroup.add(rig.root);
-        remote = { player: p, rig };
-        remotePlayers.set(p.id, remote);
+        const aura = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.14, 10, 32), new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.9, depthWrite: false }));
+        aura.rotation.x = Math.PI / 2;
+        worldGroup.add(rig.root); worldGroup.add(aura);
+        remote = { player: p, rig, aura }; remotePlayers.set(p.id, remote);
       }
       remote.player = p;
       remote.rig.root.position.set(p.x, 0, p.z);
-      remote.rig.root.visible = Math.hypot(p.x - heroRig.root.position.x, p.z - heroRig.root.position.z) < 100;
-      remote.rig.root.userData.remotePlayer = true;
+      remote.rig.root.visible = Math.hypot(p.x - heroRig.root.position.x, p.z - heroRig.root.position.z) < 100 || Boolean(p.duelId);
+      remote.aura.position.set(p.x, 0.08, p.z); remote.aura.visible = Boolean(p.duelId);
     }
   };
   online.subscribe(syncRemotePlayers);
   online.start();
+  online.updateLocal({ x: initialSpawn.x, z: initialSpawn.z, level: initialStats.level, hp: initialStats.hp, maxHp: initialStats.maxHp, mp: initialStats.mp, maxMp: initialStats.maxMp, atk: initialStats.atk, def: initialStats.def, gold: initialStats.gold });
   heroRig.applyEquipment(initialEquipped);
   heroRig.root.position.set(initialSpawn.x, 0, initialSpawn.z);
   scene.add(heroRig.root);
@@ -1367,6 +1456,16 @@ export function mountWorldScene(
 
   const triggerSkill = (slotIndex: number) => {
     if (paused || isDead) return;
+    if (activeDuel?.active) {
+      if (skillCooldowns[slotIndex] > 0) return;
+      const duelSkill = classDef.skills[slotIndex];
+      if (!duelSkill || statsRef.level < duelSkill.unlockLevel || statsRef.mp < duelSkill.mpCost) return;
+      skillCooldowns[slotIndex] = duelSkill.cooldown;
+      online.sendDuelAction(slotIndex);
+      currentAction = slotIndex === 0 ? 'attack1' : duelSkill.effectKind === 'projectile' ? 'skill_shoot' : 'skill_nova';
+      actionDuration = 0.42; actionTimer = 0;
+      return;
+    }
     const skill: ClassSkillDef | undefined = classDef.skills[slotIndex];
     if (!skill) return;
     if (statsRef.level < skill.unlockLevel) {
@@ -1677,7 +1776,7 @@ export function mountWorldScene(
     onlineAccumulator += rawDt;
     if (!paused && onlineAccumulator >= 0.12) {
       onlineAccumulator = 0;
-      online.updateLocal({ x: heroRig.root.position.x, z: heroRig.root.position.z, level: statsRef.level, hp: statsRef.hp, mp: statsRef.mp });
+      online.updateLocal({ x: heroRig.root.position.x, z: heroRig.root.position.z, level: statsRef.level, hp: statsRef.hp, maxHp: statsRef.maxHp, mp: statsRef.mp, maxMp: statsRef.maxMp, atk: statsRef.atk, def: statsRef.def, gold: statsRef.gold });
     }
     const heroXForAudio = heroRig.root.position.x;
     const heroZForAudio = heroRig.root.position.z;
@@ -1833,7 +1932,12 @@ export function mountWorldScene(
         const nz = mz / Math.max(len, 1);
         moveRatio = Math.min(len, 1);
         const moveSpeed = 7.8 + statsRef.spd * 0.16;
-        const resolved = resolveCollisions(px + nx * moveSpeed * dt, pz + nz * moveSpeed * dt);
+        let resolved = resolveCollisions(px + nx * moveSpeed * dt, pz + nz * moveSpeed * dt);
+        if (activeDuel?.active) {
+          const ax = resolved.x - arenaCenter.x, az = resolved.z - arenaCenter.z;
+          const ad = Math.hypot(ax, az);
+          if (ad > arenaCenter.radius - 2) resolved = { x: arenaCenter.x + (ax / ad) * (arenaCenter.radius - 2), z: arenaCenter.z + (az / ad) * (arenaCenter.radius - 2) };
+        }
         heroRig.root.position.x = resolved.x;
         heroRig.root.position.z = resolved.z;
 
@@ -2173,6 +2277,11 @@ export function mountWorldScene(
         };
       });
 
+      localDuelAura.position.set(heroRig.root.position.x, 0.08, heroRig.root.position.z);
+      const onlineHud = [...remotePlayers.values()].filter((r) => Math.hypot(r.player.x - px, r.player.z - pz) < 100).map((r) => {
+        const s = projectToScreen(r.player.x, 2.65, r.player.z);
+        return { id: r.player.id, username: r.player.username, level: r.player.level, hp: r.player.hp, maxHp: r.player.maxHp, x: r.player.x, z: r.player.z, distance: Math.hypot(r.player.x - px, r.player.z - pz), screenX: s.x, screenY: s.y, visible: s.visible, duelId: r.player.duelId || null };
+      });
       const sunElevNow = Math.sin(timeOfDay * Math.PI * 2);
       const activeReg = WORLD_REGIONS.find((r) => r.id === currentRegionId) || WORLD_REGIONS[0];
       callbacks.onHudTick({
@@ -2187,6 +2296,7 @@ export function mountWorldScene(
         weather: activeReg.biome === 'snow' ? 'snow' : weatherState,
         enemies: enemiesHud,
         npcs: npcsHud,
+        onlinePlayers: onlineHud,
         cooldowns: [...skillCooldowns],
         dodgeCooldown,
       });
@@ -2249,6 +2359,8 @@ export function mountWorldScene(
     syncSkillLevels: (levels) => {
       skillLevelsRef = { ...levels };
     },
+    requestDuel: (targetId) => online.requestDuel(targetId),
+    respondDuel: (requestId, accept) => online.respondDuel(requestId, accept),
     getMapDots: () =>
       enemyStates
         .filter((e) => e.alive)
@@ -2259,6 +2371,7 @@ export function mountWorldScene(
     dispose: () => {
       disposed = true;
       online.stop();
+      scene.remove(localDuelAura);
       for (const remote of remotePlayers.values()) worldGroup.remove(remote.rig.root);
       remotePlayers.clear();
       cancelAnimationFrame(frameId);

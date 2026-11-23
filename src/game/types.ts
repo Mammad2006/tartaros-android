@@ -232,6 +232,7 @@ export interface EnemyState {
   xpReward: number;
   goldReward: number;
   dropChance: number;
+  difficulty?: 'normal' | 'hard' | 'nightmare' | 'hell';
   dropPool: string[];
   isBoss: boolean;
   hasPhases?: boolean;

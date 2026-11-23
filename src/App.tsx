@@ -48,6 +48,7 @@ import {
 import { MinimapWidget, WorldMapModal } from './components/MinimapAndWorldMap';
 import { TouchJoystick } from './components/TouchJoystick';
 import { soundEngine } from './game/audio';
+import { DuelRequest, DuelState, DuelEndEvent } from './game/online';
 import {
   CLASSES,
   createStarterInventory,
@@ -250,6 +251,8 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [portraitWarnDismissed, setPortraitWarnDismissed] = useState(false);
   const [isPortraitMobile, setIsPortraitMobile] = useState(false);
+  const [duelRequest, setDuelRequest] = useState<DuelRequest | null>(null);
+  const [duelState, setDuelState] = useState<DuelState | null>(null);
 
   const [hudSnapshot, setHudSnapshot] = useState<{
     playerX: number;
@@ -285,6 +288,20 @@ export default function App() {
       screenY: number;
       visible: boolean;
     }>;
+    onlinePlayers: Array<{
+      id: string;
+      username: string;
+      level: number;
+      hp: number;
+      maxHp: number;
+      x: number;
+      z: number;
+      distance: number;
+      screenX: number;
+      screenY: number;
+      visible: boolean;
+      duelId?: string | null;
+    }>;
     cooldowns: number[];
     dodgeCooldown: number;
   }>({
@@ -299,6 +316,7 @@ export default function App() {
     weather: 'clear',
     enemies: [],
     npcs: [],
+    onlinePlayers: [],
     cooldowns: [0, 0, 0, 0, 0, 0],
     dodgeCooldown: 0,
   });
@@ -714,6 +732,23 @@ export default function App() {
         onNearFlowerChange: (f) => setNearFlower(f),
         onNpcClicked: (n) => setActiveNpc(n),
         onFloatingText: addFloatingText,
+        onDuelRequest: (request) => setDuelRequest(request),
+        onDuelState: (state) => setDuelState(state),
+        onDuelDamage: () => {},
+        onDuelNotice: (message) => showToast(message),
+        onDuelEnd: (event, localWon) => {
+          setDuelState(null);
+          worldCtrlRef.current?.respawnInCity();
+          setStats((prev) => ({
+            ...prev,
+            hp: prev.maxHp,
+            mp: prev.maxMp,
+            gold: localWon ? event.winnerGold : event.loserGold,
+          }));
+          showToast(localWon
+            ? `🏆 پیروز شدید! ${event.transferredGold.toLocaleString()} سکه دریافت کردید.`
+            : `💀 شکست خوردید! ${event.transferredGold.toLocaleString()} سکه از دست دادید.`);
+        },
         onHudTick: (snap) => setHudSnapshot(snap),
       },
       { username, level: stats.level }
@@ -1272,6 +1307,55 @@ export default function App() {
           onAdjustZoom={(delta) => worldCtrlRef.current?.adjustZoom(delta)}
         />
       </div>
+
+      {/* ONLINE PLAYERS: name + level above every nearby live player */}
+      <div className="absolute inset-0 z-15 pointer-events-none overflow-hidden">
+        {hudSnapshot.onlinePlayers.map((p) => p.visible && (
+          <div
+            key={p.id}
+            className="absolute -translate-x-1/2 -translate-y-full flex flex-col items-center gap-0.5 pointer-events-none"
+            style={{ left: p.screenX, top: p.screenY }}
+          >
+            <div className="px-2 py-0.5 rounded-md bg-black/80 border border-sky-400/60 text-[10px] font-bold text-white whitespace-nowrap shadow-lg">
+              {p.username} <span className="text-sky-300">Lv.{p.level}</span>
+            </div>
+            <div className="w-16 h-1 rounded-full bg-black/80 overflow-hidden border border-white/10">
+              <div className="h-full bg-red-500" style={{ width: `${Math.max(0, Math.min(100, (p.hp / Math.max(1, p.maxHp)) * 100))}%` }} />
+            </div>
+            {p.distance <= 9 && !p.duelId && !duelState && (
+              <button
+                onClick={() => worldCtrlRef.current?.requestDuel(p.id)}
+                className="pointer-events-auto mt-1 px-2.5 py-1 rounded-lg bg-red-900/95 border border-red-400 text-red-100 text-[9px] font-bold shadow-lg active:scale-95 cursor-pointer"
+              >
+                ⚔ درخواست دوئل
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* INCOMING DUEL REQUEST */}
+      {duelRequest && duelRequest.expiresAt > Date.now() && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 w-[min(92vw,360px)] p-4 rounded-2xl bg-[#100d12]/97 border-2 border-red-500/70 shadow-2xl pointer-events-auto">
+          <div className="text-center space-y-2">
+            <div className="text-red-300 text-xl font-black">⚔ درخواست دوئل</div>
+            <div className="text-white font-bold">{duelRequest.from.username}</div>
+            <div className="text-xs text-slate-300">Lv.{duelRequest.from.level} شما را به مبارزه در کولوسئوم دعوت کرده است.</div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => { worldCtrlRef.current?.respondDuel(duelRequest.requestId, true); setDuelRequest(null); }} className="flex-1 py-2 rounded-xl bg-emerald-700 border border-emerald-400 text-white font-bold cursor-pointer">تأیید</button>
+              <button onClick={() => { worldCtrlRef.current?.respondDuel(duelRequest.requestId, false); setDuelRequest(null); }} className="flex-1 py-2 rounded-xl bg-red-950 border border-red-500 text-red-200 font-bold cursor-pointer">رد</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DUEL HUD */}
+      {duelState && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-xl bg-red-950/90 border border-red-500/80 shadow-xl pointer-events-none text-center">
+          <div className="text-[10px] text-red-300 font-bold">⚔ COLOSSEUM DUEL ⚔</div>
+          <div className="text-xs text-white font-black">{duelState.opponent.username} · Lv.{duelState.opponent.level}</div>
+        </div>
+      )}
 
       {/* TOAST BANNER */}
       {toastMsg && (

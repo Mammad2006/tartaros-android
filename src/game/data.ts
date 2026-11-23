@@ -1015,7 +1015,8 @@ export function generateWorldEnemies(): EnemyState[] {
     for (let i = 0; i < spec.count; i++) {
       const kind = spec.kinds[i % spec.kinds.length];
       const isWolf = kind === 'wolf' || kind === 'ice_wolf';
-      const packIndex = Math.floor(i / (isWolf ? 4 : 1));
+      const packSize = isWolf ? 3 + Math.floor(seeded((mobIdx + 7000) * 13) * 3) : 1;
+      const packIndex = Math.floor(i / packSize);
       const packAngle = seeded((mobIdx + packIndex) * 3) * Math.PI * 2;
       const packDist = 34 + seeded((mobIdx + packIndex) * 5) * Math.max(20, reg.size - 55);
       const packCenterX = reg.x + Math.cos(packAngle) * packDist;
@@ -1025,8 +1026,16 @@ export function generateWorldEnemies(): EnemyState[] {
       const x = Math.round(packCenterX + Math.cos(memberAngle) * memberDist);
       const z = Math.round(packCenterZ + Math.sin(memberAngle) * memberDist);
       const lv = spec.baseLv + (i % 3);
-      // Grounded balanced HP & ATK scaling
-      const maxHp = 85 + lv * 18;
+      // Enemy difficulty roll: 50% normal, 35% hard, 7% nightmare, 1% hell.
+      // The remaining 7% is intentionally treated as normal so the requested spawn
+      // counts remain stable while preserving the exact requested tier weights.
+      const roll = Math.random() * 100;
+      const difficulty: EnemyState['difficulty'] =
+        roll < 50 ? 'normal' : roll < 85 ? 'hard' : roll < 92 ? 'nightmare' : roll < 93 ? 'hell' : 'normal';
+      const statMult = difficulty === 'hard' ? 2.5 : difficulty === 'nightmare' ? 5 : difficulty === 'hell' ? 8 : 1;
+      const rewardMult = statMult;
+      // Grounded balanced HP & ATK scaling + requested difficulty multiplier
+      const maxHp = Math.round((85 + lv * 18) * statMult);
       const nameMap: Record<MobKind, string> = {
         wolf: 'Shadow Wolf',
         goblin: 'Forest Goblin',
@@ -1071,12 +1080,13 @@ export function generateWorldEnemies(): EnemyState[] {
         homeZ: z,
         hp: maxHp,
         maxHp,
-        atk: 9 + lv * 2,
-        def: 2 + Math.floor(lv * 0.5),
+        atk: Math.round((9 + lv * 2) * statMult),
+        def: Math.round((2 + Math.floor(lv * 0.5)) * statMult),
         speed: kind === 'wolf' || kind === 'imp' ? 5.2 : 4.0,
-        xpReward: 24 + lv * 7,
-        goldReward: 20 + lv * 5,
+        xpReward: Math.round((24 + lv * 7) * rewardMult),
+        goldReward: Math.round((20 + lv * 5) * rewardMult),
         dropChance: 0.34,
+        difficulty,
         dropPool:
           kind === 'wolf'
             ? ['wolf_tooth', 'health_potion', 'leather_boots', 'iron_gauntlets']
@@ -1086,7 +1096,7 @@ export function generateWorldEnemies(): EnemyState[] {
         alive: true,
         respawnTimer: 0,
         state: 'idle',
-        packId: (kind === 'wolf' || kind === 'ice_wolf') ? `pack-${spec.regionId}-${Math.floor(i / 4)}` : undefined,
+        packId: (kind === 'wolf' || kind === 'ice_wolf') ? `pack-${spec.regionId}-${packIndex}` : undefined,
       });
       mobIdx++;
     }
