@@ -36,8 +36,115 @@ jobs:
       - name: Initialize Capacitor Android
         run: npx cap add android
 
+      - name: Install Pillow for Android icon generation
+        run: python3 -m pip install --quiet Pillow
+
+      - name: Generate Tartaros Android launcher icons
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          source = Path('resources/icon.png')
+          if not source.exists():
+              raise SystemExit('resources/icon.png was not found')
+
+          img = Image.open(source).convert('RGBA')
+          sizes = {
+              'mdpi': 48,
+              'hdpi': 72,
+              'xhdpi': 96,
+              'xxhdpi': 144,
+              'xxxhdpi': 192,
+          }
+
+          for density, size in sizes.items():
+              out = Path(f'android/app/src/main/res/mipmap-{density}')
+              out.mkdir(parents=True, exist_ok=True)
+              icon = img.resize((size, size), Image.Resampling.LANCZOS)
+              icon.save(out / 'ic_launcher.png', optimize=True)
+              icon.save(out / 'ic_launcher_round.png', optimize=True)
+          print('Tartaros launcher icons generated.')
+          PY
+
       - name: Sync Capacitor
         run: npx cap sync android
+
+      - name: Enable immersive full-screen Android mode
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          activity = Path('android/app/src/main/java/com/tartaros/game/MainActivity.java')
+          if not activity.exists():
+              candidates = list(Path('android/app/src/main/java').rglob('MainActivity.java'))
+              if not candidates:
+                  raise SystemExit('MainActivity.java was not found')
+              activity = candidates[0]
+
+          text = activity.read_text(encoding='utf-8')
+          pkg = re.search(r'^package\s+([\w.]+);', text, re.MULTILINE)
+          if not pkg:
+              raise SystemExit('Could not determine Android package name')
+          package_name = pkg.group(1)
+
+          new_text = '''package __PACKAGE__;
+
+          import android.os.Bundle;
+          import android.view.View;
+          import android.view.Window;
+          import android.view.WindowInsets;
+          import android.view.WindowInsetsController;
+          import android.view.WindowManager;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  hideSystemBars();
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+                  if (hasFocus) hideSystemBars();
+              }
+
+              private void hideSystemBars() {
+                  Window window = getWindow();
+                  if (android.os.Build.VERSION.SDK_INT >= 30) {
+                      WindowInsetsController controller = window.getInsetsController();
+                      if (controller != null) {
+                          controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                          controller.setSystemBarsBehavior(
+                              WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                          );
+                      }
+                  } else {
+                      window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                          WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                      window.getDecorView().setSystemUiVisibility(
+                          View.SYSTEM_UI_FLAG_FULLSCREEN
+                          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                          | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                          | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                          | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                          | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                      );
+                  }
+              }
+          }
+          '''.replace('__PACKAGE__', package_name)
+
+          # Remove the indentation inherited from the YAML block.
+          new_text = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_text.splitlines()) + '\n'
+          activity.write_text(new_text, encoding='utf-8')
+          print(f'Immersive full-screen enabled in {activity}')
+          PY
 
       - name: Force Android landscape orientation
         shell: bash

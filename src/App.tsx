@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
 import { ScreenOrientation } from '@capacitor/screen-orientation';
 import {
   ArrowUp,
@@ -1579,11 +1580,18 @@ export default function App() {
             setIsManualPaused((p) => !p);
             setExitModalOpen(false);
           }}
-          onExitGame={() => {
+          onExitGame={async () => {
+            // Save first, then close the native Android app completely.
             persistGameState();
             setExitModalOpen(false);
             setIsManualPaused(false);
-            setStage('intro');
+
+            try {
+              await CapacitorApp.exitApp();
+            } catch {
+              // Browser/dev fallback: return to the intro screen.
+              setStage('intro');
+            }
           }}
           onClose={() => setExitModalOpen(false)}
         />

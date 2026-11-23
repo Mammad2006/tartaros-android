@@ -1,27 +1,28 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Tartaros Android Build
 
-# Run and deploy your AI Studio app
+This project is configured for GitHub Actions + Capacitor Android.
 
-This contains everything you need to run your app locally.
+## Build APK on GitHub
 
-View your app in AI Studio: https://ai.studio/apps/12b18e17-1ac0-44e3-ac43-d145fea1de65
+1. Create a GitHub repository (for example `tartaros-android`).
+2. Upload the contents of this project to the repository root.
+3. Push to the `main` branch.
+4. Open **Actions** in GitHub and select **Build Tartaros Android APK**.
+5. Wait for the workflow to finish successfully.
+6. Open the completed workflow run and scroll to **Artifacts**.
+7. Download **Tartaros-APK** and extract `app-debug.apk`.
 
-## Run Locally
+You can also start the build manually from:
+**Actions → Build Tartaros Android APK → Run workflow**.
 
-**Prerequisites:**  Node.js
+## Android behavior
 
+- Landscape orientation is forced.
+- Android status/navigation system bars are hidden with immersive full-screen mode.
+- The game uses the full screen area on supported Android devices.
+- The Tartaros launcher icon is generated from `resources/icon.png` for all Android densities.
+- The in-game Exit button calls Capacitor's native `exitApp()` on Android, so the application closes instead of returning to the intro screen.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Important
 
-
-## Android APK build
-
-The GitHub Actions workflow at `.github/workflows/android.yml` builds the Vite app,
-creates the Capacitor Android project, forces the Android activity to landscape,
-and uploads `app-debug.apk` as the `Tartaros-APK` artifact.
+The GitHub workflow creates the native `android/` project during the build, so you do **not** need to commit the generated `android/` folder.
