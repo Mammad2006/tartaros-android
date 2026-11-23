@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -46,23 +47,58 @@ jobs:
           import re
 
           manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+          if not manifest.exists():
+              raise SystemExit("AndroidManifest.xml was not found")
+
           text = manifest.read_text(encoding="utf-8")
 
-          pattern = r'(<activity\\b[^>]*android:name="[^"]*MainActivity"[^>]*)'
-          if re.search(pattern, text):
+          # Find MainActivity regardless of attribute order.
+          pattern = r'(<activity\b[^>]*\bandroid:name="[^"]*MainActivity"[^>]*)'
+          match = re.search(pattern, text)
+
+          if not match:
+              # Fallback for .MainActivity / fully-qualified MainActivity.
+              pattern = r'(<activity\b[^>]*android:name="[^"]*\.?MainActivity"[^>]*)'
+              match = re.search(pattern, text)
+
+          if not match:
+              # Final fallback: find the launcher activity.
+              launcher_pattern = (
+                  r'(<activity\b(?=[^>]*android.intent.action.MAIN)'
+                  r'(?=[^>]*android.intent.category.LAUNCHER)[^>]*)'
+              )
+              match = re.search(launcher_pattern, text)
+
+          if not match:
+              raise SystemExit(
+                  "Could not find MainActivity or launcher activity"
+              )
+
+          activity_tag = match.group(1)
+
+          if 'android:screenOrientation=' not in activity_tag:
+              new_activity_tag = (
+                  activity_tag +
+                  ' android:screenOrientation="landscape"'
+              )
+
+              text = (
+                  text[:match.start(1)] +
+                  new_activity_tag +
+                  text[match.end(1):]
+              )
+          else:
               text = re.sub(
-                  pattern,
-                  lambda m: m.group(1) if 'android:screenOrientation=' in m.group(1)
-                  else m.group(1) + ' android:screenOrientation="landscape"',
+                  r'android:screenOrientation="[^"]*"',
+                  'android:screenOrientation="landscape"',
                   text,
                   count=1
               )
-          else:
-              # Capacitor's generated manifest normally has MainActivity.
-              # If its formatting changes, fail instead of producing an unlocked APK.
-              raise SystemExit("MainActivity was not found in AndroidManifest.xml")
 
           manifest.write_text(text, encoding="utf-8")
+
+          print("Android landscape orientation enabled successfully.")
           PY
 
       - name: Make Gradle executable
