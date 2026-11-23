@@ -193,7 +193,27 @@ export type MobKind =
   | 'drake'
   | 'orc_warlord'
   | 'final_malakor'
-  | 'final_tartaros';
+  | 'final_tartaros'
+  | 'boar'
+  | 'bandit'
+  | 'swamp_slime'
+  | 'horned_beetle'
+  | 'venom_spider'
+  | 'stone_mite'
+  | 'frost_bat'
+  | 'ice_wolf'
+  | 'fire_lizard'
+  | 'ember_hound'
+  | 'ash_golem'
+  | 'sand_wraith'
+  | 'cactus_beast'
+  | 'forest_troll'
+  | 'dark_fairy'
+  | 'raven'
+  | 'corrupted_ent'
+  | 'crystal_hound'
+  | 'lava_serpent'
+  | 'thunder_harpy';
 
 export interface EnemyState {
   id: string;
@@ -219,6 +239,7 @@ export interface EnemyState {
   alive: boolean;
   respawnTimer: number;
   state: 'idle' | 'chase' | 'windup' | 'attack' | 'skill' | 'stagger';
+  packId?: string;
 }
 
 export interface LootDrop {

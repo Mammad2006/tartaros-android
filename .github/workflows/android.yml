@@ -31,6 +31,8 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: Build web game
+        env:
+          VITE_GAME_SERVER_URL: ${{ secrets.VITE_GAME_SERVER_URL }}
         run: npm run build
 
       - name: Initialize Capacitor Android
@@ -93,6 +95,7 @@ jobs:
 
           new_text = '''package __PACKAGE__;
 
+          import android.graphics.Color;
           import android.os.Bundle;
           import android.view.View;
           import android.view.Window;
@@ -105,6 +108,10 @@ jobs:
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+                  Window window = getWindow();
+                  window.setStatusBarColor(Color.TRANSPARENT);
+                  window.setNavigationBarColor(Color.TRANSPARENT);
+                  window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
                   hideSystemBars();
               }
 
@@ -120,9 +127,8 @@ jobs:
                       WindowInsetsController controller = window.getInsetsController();
                       if (controller != null) {
                           controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                          controller.setSystemBarsBehavior(
-                              WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                          );
+                          controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+
                       }
                   } else {
                       window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,

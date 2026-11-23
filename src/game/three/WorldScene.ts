@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { soundEngine } from '../audio';
+import { OnlineSession, OnlinePlayer } from '../online';
 import {
   CLASSES,
   generateWorldEnemies,
@@ -40,6 +41,9 @@ import {
   createRadialShadowTexture,
   getCobblestoneTexture,
   getGrassTerrainTexture,
+  getDirtTerrainTexture,
+  getStoneTexture,
+  getWaterTexture,
 } from './textures';
 
 export interface WorldCallbacks {
@@ -172,8 +176,10 @@ export function mountWorldScene(
   initialStats: HeroStats,
   initialSettings: GameSettings,
   initialSpawn: { x: number; z: number },
-  callbacks: WorldCallbacks
+  callbacks: WorldCallbacks,
+  onlineIdentity?: { username: string; level: number }
 ): WorldController {
+  const identity = onlineIdentity || { username: 'Hero', level: initialStats.level };
   const classDef = CLASSES.find((c) => c.id === classId) || CLASSES[0];
 
   const isSoftwareGl = (() => {
@@ -285,6 +291,8 @@ export function mountWorldScene(
 
   const worldGroup = new THREE.Group();
   scene.add(worldGroup);
+
+
 
   // 1. Ocean & Continent
   const ocean = new THREE.Mesh(
@@ -462,12 +470,33 @@ export function mountWorldScene(
     // === 1) GRAND KING'S PALACE (UPPER ROYAL DISTRICT, North part of city: cz - 118) ===
     const px = cx;
     const pz = cz - 118;
-    const palaceKeep = new THREE.Mesh(new THREE.BoxGeometry(48, 26, 36), royalWallMat);
-    palaceKeep.position.set(px, 13, pz);
-    palaceKeep.castShadow = true;
-    palaceKeep.receiveShadow = true;
-    worldGroup.add(palaceKeep);
-    boxColliders.push({ minX: px - 24.8, maxX: px + 24.8, minZ: pz - 18.8, maxZ: pz + 18.8 });
+    // Open-front palace: the player can walk inside instead of colliding with a solid box.
+    const palaceFloor = new THREE.Mesh(new THREE.BoxGeometry(48, 0.45, 36), stoneMat);
+    palaceFloor.position.set(px, 0.22, pz);
+    palaceFloor.receiveShadow = true;
+    worldGroup.add(palaceFloor);
+    const palaceWalls: Array<[number, number, number, number]> = [
+      [px - 24, pz, 2.2, 36], [px + 24, pz, 2.2, 36],
+      [px, pz - 18, 48, 2.2], [px - 17, pz + 18, 14, 2.2], [px + 17, pz + 18, 14, 2.2],
+    ];
+    palaceWalls.forEach(([wx, wz, ww, wd]) => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(ww, 26, wd), royalWallMat);
+      wall.position.set(wx, 13, wz);
+      wall.castShadow = true; wall.receiveShadow = true;
+      worldGroup.add(wall);
+      boxColliders.push({ minX: wx - ww / 2 - 0.5, maxX: wx + ww / 2 + 0.5, minZ: wz - wd / 2 - 0.5, maxZ: wz + wd / 2 + 0.5 });
+    });
+    // Palace interior: throne, columns, banners and warm floor lighting.
+    const throne = new THREE.Mesh(new THREE.BoxGeometry(4.2, 5.5, 2.8), goldTrimMat);
+    throne.position.set(px, 2.8, pz - 11); throne.castShadow = true; worldGroup.add(throne);
+    [-15, 15].forEach((ox) => {
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.45, 10, 12), royalWallMat);
+      col.position.set(px + ox, 5, pz + 4); col.castShadow = true; worldGroup.add(col);
+      const banner = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 9), new THREE.MeshStandardMaterial({ color: 0x7f1d1d, roughness: 0.8, side: THREE.DoubleSide }));
+      banner.position.set(px + ox, 8, pz + 7); banner.rotation.y = Math.PI; worldGroup.add(banner);
+    });
+    const palaceLight = new THREE.PointLight(0xffd27a, 1.8, 32);
+    palaceLight.position.set(px, 5, pz + 2); worldGroup.add(palaceLight);
 
     const centralSpire = new THREE.Mesh(new THREE.CylinderGeometry(10, 12, 18, 12), royalWallMat);
     centralSpire.position.set(px, 34, pz);
@@ -744,26 +773,56 @@ export function mountWorldScene(
   });
 
   // 5. FLOWING MOUNTAIN RIVERS THROUGH BOTH FORESTS
-  const riverMat = new THREE.MeshStandardMaterial({
-    color: 0x0284c7,
-    emissive: 0x0369a1,
-    emissiveIntensity: 0.45,
-    roughness: 0.12,
-    metalness: 0.3,
+  const waterTex = getWaterTexture();
+  const riverMat = new THREE.MeshPhysicalMaterial({
+    map: waterTex,
+    color: 0x8be8ff,
+    emissive: 0x075985,
+    emissiveIntensity: 0.22,
+    roughness: 0.08,
+    metalness: 0.08,
+    transmission: 0.22,
     transparent: true,
-    opacity: 0.88,
+    opacity: 0.86,
   });
+  const riverBankMat = new THREE.MeshStandardMaterial({ map: getStoneTexture(), color: 0x8b8b84, roughness: 0.94 });
   const rivers: Array<[number, number, number, number]> = [
-    [-660, -620, -580, -120], // Frostfang Peaks -> Elderwood Wilds
-    [840, 220, 560, 40], // Granite Ridge -> Whispering Woods
+    [-660, -620, -580, -120],
+    [840, 220, 560, 40],
   ];
-  rivers.forEach(([rx1, rz1, rx2, rz2]) => {
-    const rLen = Math.hypot(rx2 - rx1, rz2 - rz1) + 90;
-    const river = new THREE.Mesh(new THREE.PlaneGeometry(14, rLen), riverMat);
-    river.rotation.x = -Math.PI / 2;
-    river.rotation.z = -Math.atan2(rx2 - rx1, rz2 - rz1);
-    river.position.set((rx1 + rx2) / 2, 0.05, (rz1 + rz2) / 2);
-    worldGroup.add(river);
+  rivers.forEach(([rx1, rz1, rx2, rz2], riverIdx) => {
+    const dx = rx2 - rx1, dz = rz2 - rz1;
+    const len = Math.hypot(dx, dz) + 90;
+    const angle = -Math.atan2(dx, dz);
+    const cx = (rx1 + rx2) / 2, cz = (rz1 + rz2) / 2;
+    const river = new THREE.Mesh(new THREE.PlaneGeometry(18, len), riverMat);
+    river.rotation.x = -Math.PI / 2; river.rotation.z = angle; river.position.set(cx, 0.06, cz); worldGroup.add(river);
+    // Continuous stone/pebble banks make the river readable from the air and ground.
+    [-1, 1].forEach((side) => {
+      const bank = new THREE.Mesh(new THREE.PlaneGeometry(2.7, len), riverBankMat);
+      bank.rotation.x = -Math.PI / 2; bank.rotation.z = angle;
+      bank.position.set(cx + Math.cos(angle) * side * 10.1, 0.075, cz + Math.sin(angle) * side * 10.1);
+      worldGroup.add(bank);
+    });
+    for (let i = 0; i < 42; i++) {
+      const t = (i + 0.5) / 42;
+      const px = rx1 + dx * t + (Math.random() - 0.5) * 5;
+      const pz = rz1 + dz * t + (Math.random() - 0.5) * 5;
+      [-1, 1].forEach((side) => {
+        const pebble = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16 + Math.random() * 0.28, 0), riverBankMat);
+        pebble.position.set(px + side * (10 + Math.random() * 2.5), 0.22, pz + (Math.random() - 0.5) * 2.5);
+        pebble.scale.set(1.3, 0.65, 0.9); pebble.castShadow = true; worldGroup.add(pebble);
+      });
+    }
+    // Colorful fish silhouettes: shallow, tiny, clearly visible from above.
+    const fishColors = [0xf97316, 0xfacc15, 0x38bdf8, 0xf472b6, 0x34d399];
+    for (let i = 0; i < 18; i++) {
+      const t = Math.random();
+      const fx = rx1 + dx * t + (Math.random() - 0.5) * 10;
+      const fz = rz1 + dz * t + (Math.random() - 0.5) * 10;
+      const fish = new THREE.Mesh(new THREE.SphereGeometry(0.22, 7, 5), new THREE.MeshStandardMaterial({ color: fishColors[(i + riverIdx) % fishColors.length], emissive: fishColors[(i + riverIdx) % fishColors.length], emissiveIntensity: 0.2 }));
+      fish.scale.set(1.8, 0.45, 0.75); fish.position.set(fx, 0.22, fz); fish.userData = { riverFish: true, phase: Math.random() * Math.PI * 2, speed: 0.4 + Math.random() * 0.5 }; worldGroup.add(fish);
+    }
   });
 
   // 6. LUSH FORESTS (Broadleaf + Pine Trees, Pebbles, Hay/Grass Tufts, Colorful Wildflowers)
@@ -866,13 +925,36 @@ export function mountWorldScene(
   };
   for (let i = 0; i < 8; i++) spawnRandomGoldenFlower();
 
+  // 7.5 NATURAL LAND DETAIL: brown pebbles, rocks and shallow escape-friendly pits on open plains.
+  const dirtTex = getDirtTerrainTexture();
+  const openDirtMat = new THREE.MeshStandardMaterial({ map: dirtTex, roughness: 0.97 });
+  const pebbleMat = new THREE.MeshStandardMaterial({ map: getStoneTexture(), color: 0x77716a, roughness: 0.95, flatShading: true });
+  for (let i = 0; i < 180; i++) {
+    const ang = seeded(i * 31 + 8000) * Math.PI * 2;
+    const dist = 260 + seeded(i * 37 + 8100) * 820;
+    const dx = Math.cos(ang) * dist, dz = Math.sin(ang) * dist;
+    if (isInSafeZoneOrRoad(dx, dz)) continue;
+    if (WORLD_REGIONS.some((r) => r.biome !== 'city' && Math.hypot(dx - r.x, dz - r.z) < r.size * 0.45)) continue;
+    const isPit = i % 4 === 0;
+    if (isPit) {
+      const pit = new THREE.Mesh(new THREE.CylinderGeometry(2 + (i % 3) * 0.7, 1.3, 0.18, 12), openDirtMat);
+      pit.position.set(dx, 0.02, dz); pit.scale.y = 0.18; worldGroup.add(pit);
+    } else {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.25 + seeded(i * 41) * 0.9, 0), pebbleMat);
+      rock.position.set(dx, 0.18, dz); rock.rotation.set(Math.random(), Math.random(), Math.random()); rock.castShadow = true; worldGroup.add(rock);
+      if (i % 3 === 0) {
+        const small = rock.clone(); small.scale.setScalar(0.45); small.position.x += 1.1; small.position.z -= 0.7; worldGroup.add(small);
+      }
+    }
+  }
+
   // 8. MOUNTAINS (Impassable Colliders)
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x4b5563, roughness: 0.94, flatShading: true });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x6f4a32, map: getStoneTexture(), roughness: 0.96, flatShading: true });
   const peakSnowMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.72, flatShading: true });
   WORLD_REGIONS.filter((r) => r.biome === 'mountain').forEach((mReg, mIdx) => {
     const rockyFloor = new THREE.Mesh(
       new THREE.CircleGeometry(mReg.size, 32),
-      new THREE.MeshStandardMaterial({ color: 0x3b3f47, roughness: 0.95 })
+      new THREE.MeshStandardMaterial({ color: 0x6a4a32, map: getStoneTexture(), roughness: 0.96 })
     );
     rockyFloor.rotation.x = -Math.PI / 2;
     rockyFloor.position.set(mReg.x, 0.03, mReg.z);
@@ -1005,6 +1087,37 @@ export function mountWorldScene(
 
   // === HERO RIG ===
   const heroRig: HeroRig = createHeroRig(gender, classId);
+
+  // Lightweight realtime multiplayer: remote players are represented by the same hero rig and
+  // receive authoritative position updates from the Render WebSocket service.
+  const remotePlayers = new Map<string, { player: OnlinePlayer; rig: HeroRig }>();
+  const online = new OnlineSession(
+    { id: '', username: identity.username, gender, classId, x: initialSpawn.x, z: initialSpawn.z, level: identity.level },
+    () => {}
+  );
+  const syncRemotePlayers = (list: OnlinePlayer[]) => {
+    const active = new Set(list.map((p) => p.id));
+    for (const [id, remote] of remotePlayers) {
+      if (!active.has(id)) { worldGroup.remove(remote.rig.root); remotePlayers.delete(id); }
+    }
+    for (const p of list) {
+      if (p.id === '') continue;
+      let remote = remotePlayers.get(p.id);
+      if (!remote) {
+        const rig = createHeroRig(p.gender, (CLASSES.some((c) => c.id === p.classId) ? p.classId : classId) as ClassId);
+        rig.root.scale.setScalar(0.92);
+        worldGroup.add(rig.root);
+        remote = { player: p, rig };
+        remotePlayers.set(p.id, remote);
+      }
+      remote.player = p;
+      remote.rig.root.position.set(p.x, 0, p.z);
+      remote.rig.root.visible = Math.hypot(p.x - heroRig.root.position.x, p.z - heroRig.root.position.z) < 100;
+      remote.rig.root.userData.remotePlayer = true;
+    }
+  };
+  online.subscribe(syncRemotePlayers);
+  online.start();
   heroRig.applyEquipment(initialEquipped);
   heroRig.root.position.set(initialSpawn.x, 0, initialSpawn.z);
   scene.add(heroRig.root);
@@ -1536,6 +1649,7 @@ export function mountWorldScene(
   let frameId = 0;
   let disposed = false;
   let hudAccumulator = 0;
+  let onlineAccumulator = 0;
   let lastRenderTime = performance.now();
 
   const scheduleNext = (cb: () => void) => {
@@ -1560,6 +1674,17 @@ export function mountWorldScene(
     const rawDt = Math.min(clock.getDelta(), 0.05);
     const dt = paused ? 0 : rawDt * battleSpeed;
     const elapsed = clock.getElapsedTime();
+    onlineAccumulator += rawDt;
+    if (!paused && onlineAccumulator >= 0.12) {
+      onlineAccumulator = 0;
+      online.updateLocal({ x: heroRig.root.position.x, z: heroRig.root.position.z, level: statsRef.level, hp: statsRef.hp, mp: statsRef.mp });
+    }
+    const heroXForAudio = heroRig.root.position.x;
+    const heroZForAudio = heroRig.root.position.z;
+    let riverDistance = Infinity;
+    rivers.forEach(([ax, az, bx, bz]) => { riverDistance = Math.min(riverDistance, pointToSegmentDist(heroXForAudio, heroZForAudio, ax, az, bx, bz)); });
+    soundEngine.setRiverAmbience(riverDistance < 34 ? Math.max(0, 1 - riverDistance / 34) : 0);
+    worldGroup.traverse((obj) => { if (obj.userData?.riverFish) { obj.position.y = 0.22 + Math.sin(elapsed * obj.userData.speed + obj.userData.phase) * 0.025; obj.position.x += Math.cos(elapsed * 0.25 + obj.userData.phase) * 0.001; } });
 
     if (!paused) {
       for (let i = 0; i < skillCooldowns.length; i++) {
@@ -2133,6 +2258,9 @@ export function mountWorldScene(
     },
     dispose: () => {
       disposed = true;
+      online.stop();
+      for (const remote of remotePlayers.values()) worldGroup.remove(remote.rig.root);
+      remotePlayers.clear();
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       ro.disconnect();

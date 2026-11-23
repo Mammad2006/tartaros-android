@@ -715,7 +715,8 @@ export default function App() {
         onNpcClicked: (n) => setActiveNpc(n),
         onFloatingText: addFloatingText,
         onHudTick: (snap) => setHudSnapshot(snap),
-      }
+      },
+      { username, level: stats.level }
     );
 
     ctrl.syncSkillLevels(skillLevels);

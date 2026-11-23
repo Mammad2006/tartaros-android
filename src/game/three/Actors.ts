@@ -159,6 +159,54 @@ export function createEnemyRig(kind: MobKind, isBoss = false): EnemyMeshRig {
       wing.rotation.x = -0.5;
       body.add(wing);
     });
+  } else if (['boar','bandit','swamp_slime','horned_beetle','venom_spider','stone_mite','frost_bat','ice_wolf','fire_lizard','ember_hound','ash_golem','sand_wraith','cactus_beast','forest_troll','dark_fairy','raven','corrupted_ent','crystal_hound','lava_serpent','thunder_harpy'].includes(kind)) {
+    const palette: Record<string, number> = {
+      boar: 0x7c4a2d, bandit: 0x334155, swamp_slime: 0x65a30d, horned_beetle: 0x3f3f46,
+      venom_spider: 0x4c1d95, stone_mite: 0x78716c, frost_bat: 0xbfdbfe, ice_wolf: 0x93c5fd,
+      fire_lizard: 0xf97316, ember_hound: 0xdc2626, ash_golem: 0x57534e, sand_wraith: 0xd6b98c,
+      cactus_beast: 0x4d7c0f, forest_troll: 0x365314, dark_fairy: 0x7e22ce, raven: 0x18181b,
+      corrupted_ent: 0x3f6212, crystal_hound: 0x22d3ee, lava_serpent: 0xb91c1c, thunder_harpy: 0x60a5fa,
+    };
+    const mat = new THREE.MeshStandardMaterial({ color: palette[kind] ?? 0x64748b, roughness: 0.8, flatShading: true });
+    const glow = new THREE.MeshStandardMaterial({ color: 0xfef08a, emissive: 0xf59e0b, emissiveIntensity: 1.5 });
+    const torso = new THREE.Mesh(new THREE.SphereGeometry(kind === 'swamp_slime' ? 0.38 : 0.3, 10, 8), mat);
+    torso.scale.set(kind === 'venom_spider' || kind === 'horned_beetle' ? 1.3 : 1, kind === 'swamp_slime' ? 0.8 : 1.15, kind === 'raven' ? 1.5 : 1);
+    torso.position.y = 0.72;
+    body.add(torso);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), mat);
+    head.position.set(0, 1.08, 0.25);
+    body.add(head);
+    if (['boar','ice_wolf','ember_hound','crystal_hound'].includes(kind)) {
+      const snout = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.28, 6), mat);
+      snout.rotation.x = Math.PI / 2;
+      snout.position.set(0, 1.03, 0.46);
+      body.add(snout);
+    }
+    if (['raven','thunder_harpy','dark_fairy','frost_bat'].includes(kind)) {
+      [-1, 1].forEach((side) => {
+        const wing = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 0.42), glow);
+        wing.position.set(side * 0.48, 0.92, 0);
+        wing.rotation.y = side * 0.45;
+        body.add(wing);
+      });
+    }
+    if (['horned_beetle','venom_spider','stone_mite','lava_serpent'].includes(kind)) {
+      for (let i = 0; i < 4; i++) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.04, 0.45, 6), mat);
+        leg.position.set((i % 2 ? 0.24 : -0.24), 0.35, (i - 1.5) * 0.18);
+        leg.rotation.z = (i % 2 ? 0.7 : -0.7);
+        body.add(leg);
+      }
+    }
+    if (['bandit','forest_troll','cactus_beast','ash_golem'].includes(kind)) {
+      weaponArm = new THREE.Group();
+      weaponArm.position.set(0.42, 1.0, 0);
+      body.add(weaponArm);
+      const club = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.7, 0.18), glow);
+      club.position.y = -0.25;
+      club.rotation.z = -0.15;
+      weaponArm.add(club);
+    }
   } else {
     const isFinalTartaros = kind === 'final_tartaros';
     const isMalakor = kind === 'final_malakor';

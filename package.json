@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "start": "node server.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -26,7 +27,9 @@
     "@capacitor/core": "^8.6.2",
     "@capacitor/android": "^8.6.2",
     "@capacitor/screen-orientation": "^8.0.2",
-    "@capacitor/app": "^8.1.2"
+    "@capacitor/app": "^8.1.2",
+    "pg": "^8.16.3",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

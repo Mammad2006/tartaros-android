@@ -4,6 +4,8 @@ class SoundEngine {
   private bgmGain: GainNode | null = null;
   private bgmTimer: number | null = null;
   private bgmStep = 0;
+  private riverGain: GainNode | null = null;
+  private riverSource: AudioBufferSourceNode | null = null;
 
   public muted = false;
   public bgmVolume = 0.55;
@@ -171,6 +173,30 @@ class SoundEngine {
       clearInterval(this.bgmTimer);
       this.bgmTimer = null;
     }
+  }
+
+  // Soft procedural river ambience; proximity controls its volume so it feels localized in-world.
+  public setRiverAmbience(amount: number) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const target = this.muted ? 0 : Math.max(0, Math.min(1, amount)) * this.sfxVolume * 0.18;
+    if (!this.riverGain) {
+      this.riverGain = ctx.createGain();
+      this.riverGain.gain.value = 0;
+      this.riverGain.connect(ctx.destination);
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.28;
+      this.riverSource = ctx.createBufferSource();
+      this.riverSource.buffer = buffer;
+      this.riverSource.loop = true;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 1450;
+      this.riverSource.connect(filter).connect(this.riverGain);
+      this.riverSource.start();
+    }
+    this.riverGain.gain.setTargetAtTime(target, ctx.currentTime, 0.12);
   }
 
   private getSfxTarget(): { ctx: AudioContext; out: AudioNode } | null {

@@ -1000,23 +1000,30 @@ export function generateWorldEnemies(): EnemyState[] {
     kinds: MobKind[];
     baseLv: number;
   }> = [
-    { regionId: 'forest_whispering', count: 20, kinds: ['wolf', 'goblin'], baseLv: 2 },
-    { regionId: 'forest_elderwood', count: 18, kinds: ['wolf', 'goblin', 'skeleton'], baseLv: 5 },
-    { regionId: 'mountain_frostfang', count: 16, kinds: ['golem', 'goblin'], baseLv: 7 },
-    { regionId: 'mountain_granite', count: 16, kinds: ['golem', 'skeleton'], baseLv: 9 },
-    { regionId: 'snow_glacier', count: 15, kinds: ['yeti', 'wolf'], baseLv: 11 },
-    { regionId: 'lava_caldera', count: 15, kinds: ['imp', 'drake'], baseLv: 14 },
+    { regionId: 'forest_whispering', count: 28, kinds: ['wolf', 'goblin', 'boar', 'venom_spider', 'dark_fairy'], baseLv: 2 },
+    { regionId: 'forest_elderwood', count: 28, kinds: ['wolf', 'skeleton', 'forest_troll', 'raven', 'corrupted_ent'], baseLv: 5 },
+    { regionId: 'mountain_frostfang', count: 24, kinds: ['golem', 'stone_mite', 'frost_bat', 'ice_wolf', 'bandit'], baseLv: 7 },
+    { regionId: 'mountain_granite', count: 24, kinds: ['golem', 'horned_beetle', 'crystal_hound', 'stone_mite', 'bandit'], baseLv: 9 },
+    { regionId: 'snow_glacier', count: 22, kinds: ['yeti', 'wolf', 'frost_bat', 'ice_wolf'], baseLv: 11 },
+    { regionId: 'lava_caldera', count: 24, kinds: ['imp', 'drake', 'fire_lizard', 'ember_hound', 'ash_golem', 'lava_serpent'], baseLv: 14 },
+    { regionId: 'forest_whispering', count: 8, kinds: ['swamp_slime', 'cactus_beast', 'sand_wraith', 'thunder_harpy'], baseLv: 6 },
   ];
 
   let mobIdx = 1;
   spawnSpecs.forEach((spec) => {
     const reg = WORLD_REGIONS.find((r) => r.id === spec.regionId)!;
     for (let i = 0; i < spec.count; i++) {
-      const angle = seeded(mobIdx * 3) * Math.PI * 2;
-      const dist = 30 + seeded(mobIdx * 5) * (reg.size - 45);
-      const x = Math.round(reg.x + Math.cos(angle) * dist);
-      const z = Math.round(reg.z + Math.sin(angle) * dist);
       const kind = spec.kinds[i % spec.kinds.length];
+      const isWolf = kind === 'wolf' || kind === 'ice_wolf';
+      const packIndex = Math.floor(i / (isWolf ? 4 : 1));
+      const packAngle = seeded((mobIdx + packIndex) * 3) * Math.PI * 2;
+      const packDist = 34 + seeded((mobIdx + packIndex) * 5) * Math.max(20, reg.size - 55);
+      const packCenterX = reg.x + Math.cos(packAngle) * packDist;
+      const packCenterZ = reg.z + Math.sin(packAngle) * packDist;
+      const memberAngle = seeded(mobIdx * 17) * Math.PI * 2;
+      const memberDist = isWolf ? 4.5 + seeded(mobIdx * 19) * 4 : 0;
+      const x = Math.round(packCenterX + Math.cos(memberAngle) * memberDist);
+      const z = Math.round(packCenterZ + Math.sin(memberAngle) * memberDist);
       const lv = spec.baseLv + (i % 3);
       // Grounded balanced HP & ATK scaling
       const maxHp = 85 + lv * 18;
@@ -1031,6 +1038,26 @@ export function generateWorldEnemies(): EnemyState[] {
         orc_warlord: 'Orc Warlord',
         final_malakor: 'Malakor, Lord of Ash',
         final_tartaros: 'Tartaros, Fallen Sovereign',
+        boar: 'Ironhide Boar',
+        bandit: 'Road Bandit',
+        swamp_slime: 'Mire Slime',
+        horned_beetle: 'Horned Scarab',
+        venom_spider: 'Venom Spider',
+        stone_mite: 'Stone Mite',
+        frost_bat: 'Frost Bat',
+        ice_wolf: 'Glacier Wolf',
+        fire_lizard: 'Ember Lizard',
+        ember_hound: 'Ember Hound',
+        ash_golem: 'Ash Golem',
+        sand_wraith: 'Sand Wraith',
+        cactus_beast: 'Cactus Beast',
+        forest_troll: 'Forest Troll',
+        dark_fairy: 'Dark Fairy',
+        raven: 'Grim Raven',
+        corrupted_ent: 'Corrupted Ent',
+        crystal_hound: 'Crystal Hound',
+        lava_serpent: 'Lava Serpent',
+        thunder_harpy: 'Thunder Harpy',
       };
 
       list.push({
@@ -1059,6 +1086,7 @@ export function generateWorldEnemies(): EnemyState[] {
         alive: true,
         respawnTimer: 0,
         state: 'idle',
+        packId: (kind === 'wolf' || kind === 'ice_wolf') ? `pack-${spec.regionId}-${Math.floor(i / 4)}` : undefined,
       });
       mobIdx++;
     }
